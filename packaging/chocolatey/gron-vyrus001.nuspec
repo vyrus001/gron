@@ -10,6 +10,7 @@
     <licenseUrl>https://github.com/vyrus001/gron/blob/v0.8.1/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <projectSourceUrl>https://github.com/vyrus001/gron</projectSourceUrl>
+    <packageSourceUrl>https://github.com/vyrus001/gron/tree/master/packaging/chocolatey</packageSourceUrl>
     <bugTrackerUrl>https://github.com/vyrus001/gron/issues</bugTrackerUrl>
     <releaseNotes>https://github.com/vyrus001/gron/releases/tag/v0.8.1</releaseNotes>
     <summary>Make JSON greppable with the maintained vyrus001 fork of gron.</summary>
