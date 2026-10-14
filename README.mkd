@@ -31,6 +31,16 @@ scoop install vyrus001/gron
 
 This uses [the fork's bucket](https://github.com/vyrus001/scoop-bucket). Plain `scoop install gron` selects Scoop's upstream manifest.
 
+### Chocolatey: Windows x64 (awaiting moderation)
+
+[`gron-vyrus001` 0.8.1](https://community.chocolatey.org/packages/gron-vyrus001) has been submitted to Chocolatey. Once its review is approved, install it with:
+
+```powershell
+choco install gron-vyrus001
+```
+
+Plain `choco install gron` selects a separate package for the original project.
+
 ### mise: supported release platforms
 
 ```sh
