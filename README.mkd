@@ -34,10 +34,10 @@ This uses [the fork's bucket](https://github.com/vyrus001/scoop-bucket). Plain `
 ### mise: supported release platforms
 
 ```sh
-mise use -g github:vyrus001/gron@latest
+mise use -g github:vyrus001/gron@0.8.1
 ```
 
-The `github:` backend reads this fork's release assets directly. Plain `mise use -g gron@latest` can resolve to upstream.
+The `github:` backend reads this fork's release assets directly. Pin a version when a release is less than 24 hours old; mise's default minimum release age can hide it from `@latest`. Plain `mise use -g gron@latest` can resolve to upstream.
 
 ### Go
 
