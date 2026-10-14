@@ -26,6 +26,7 @@ builds:
         goarch: arm
 
 release:
+  replace_existing_artifacts: true
   github:
     owner: vyrus001
     name: gron
