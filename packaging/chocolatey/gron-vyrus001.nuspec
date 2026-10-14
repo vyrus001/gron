@@ -5,7 +5,7 @@
     <version>0.8.1</version>
     <title>gron (vyrus001 fork)</title>
     <authors>Tom Hudson; vyrus001</authors>
-    <owners>vyrus001</owners>
+    <owners>vyrus</owners>
     <projectUrl>https://github.com/vyrus001/gron</projectUrl>
     <licenseUrl>https://github.com/vyrus001/gron/blob/v0.8.1/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
