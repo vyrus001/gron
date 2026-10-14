@@ -1,0 +1,12 @@
+The gron binary is downloaded during install from the vyrus001 fork release:
+
+https://github.com/vyrus001/gron/releases/download/v0.8.1/gron_0.8.1_windows_amd64.zip
+
+SHA-256: 9b8ad90f2a6459f20560bb1d18a1a8aeda52d5483a362a8f3192215f7238b250
+
+The checksum matches the release's checksums.txt and can be checked with
+Get-FileHash -Algorithm SHA256 on the downloaded archive. The ZIP contains
+gron.exe at its root. The binary is not embedded in this package.
+
+LICENSE.txt is copied from the fork's v0.8.1 LICENSE file. Tom Hudson's
+original copyright notice is retained.

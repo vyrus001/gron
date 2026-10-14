@@ -1,0 +1,27 @@
+name: Chocolatey package
+
+on:
+  push:
+    paths:
+      - 'packaging/chocolatey/**'
+      - '.github/workflows/chocolatey.yml'
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build package
+        run: choco pack gron-vyrus001.nuspec
+        working-directory: packaging/chocolatey
+      - name: Install and run package
+        run: |
+          choco install gron-vyrus001 --source . --yes --no-progress
+          gron --version
+          choco uninstall gron-vyrus001 --yes --no-progress
+        working-directory: packaging/chocolatey
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gron-vyrus001-chocolatey
+          path: packaging/chocolatey/gron-vyrus001.0.8.1.nupkg

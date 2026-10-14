@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>gron-vyrus001</id>
+    <version>0.8.1</version>
+    <title>gron (vyrus001 fork)</title>
+    <authors>Tom Hudson; vyrus001</authors>
+    <owners>vyrus001</owners>
+    <projectUrl>https://github.com/vyrus001/gron</projectUrl>
+    <licenseUrl>https://github.com/vyrus001/gron/blob/v0.8.1/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/vyrus001/gron</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/vyrus001/gron/issues</bugTrackerUrl>
+    <releaseNotes>https://github.com/vyrus001/gron/releases/tag/v0.8.1</releaseNotes>
+    <summary>Make JSON greppable with the maintained vyrus001 fork of gron.</summary>
+    <description>gron turns JSON into assignments with full paths and reconstructs JSON from filtered assignments. This package installs the maintained vyrus001 fork of Tom Hudson's original gron, not the upstream Chocolatey gron package. The fork includes fixes, new releases, and an AI harness skill in its repository. Windows x64 only.</description>
+    <tags>gron json grep command-line portable foss</tags>
+    <copyright>Copyright (c) 2016 Tom Hudson</copyright>
+  </metadata>
+  <files>
+    <file src="tools\chocolateyInstall.ps1" target="tools" />
+    <file src="legal\LICENSE.txt" target="legal" />
+    <file src="legal\VERIFICATION.txt" target="legal" />
+  </files>
+</package>
