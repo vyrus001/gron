@@ -25,6 +25,16 @@ builds:
       - goos: windows
         goarch: arm
 
+archives:
+  - id: gron
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+          - tar.gz
+
 release:
   replace_existing_artifacts: true
   github:
