@@ -2,7 +2,8 @@
 // back into JSON. The expected input grammar is:
 //
 //   Input ::= '--'* Statement (Statement | '--')*
-//   Statement ::= Path Space* "=" Space* Value ";" "\n"
+//   Statement ::= Path WS* "=" WS* Value WS* ";" "\n"
+//   WS ::= ' ' | '\t'
 //   Path ::= (BareWord) ("." BareWord | ("[" Key "]"))*
 //   Value ::= String | Number | "true" | "false" | "null" | "[]" | "{}"
 //   BareWord ::= (UnicodeLu | UnicodeLl | UnicodeLm | UnicodeLo | UnicodeNl | '$' | '_') (UnicodeLu | UnicodeLl | UnicodeLm | UnicodeLo | UnicodeNl | UnicodeMn | UnicodeMc | UnicodeNd | UnicodePc | '$' | '_')*
@@ -152,7 +153,7 @@ func (l *lexer) acceptRunFunc(fn runeCheck) {
 // rune contained in the provided string
 func (l *lexer) acceptUntil(delims string) {
 	for !strings.ContainsRune(delims, l.next()) {
-		if l.cur == utf8.RuneError {
+		if l.width == 0 {
 			return
 		}
 	}
@@ -176,7 +177,7 @@ func (l *lexer) acceptUntilUnescaped(delims string) {
 			l.backup()
 			return
 		}
-		if l.cur == utf8.RuneError {
+		if l.width == 0 {
 			return
 		}
 		inEscape = false
@@ -197,14 +198,14 @@ func lexStatement(l *lexer) lexFn {
 		return lexBareWord
 	case r == '[':
 		return lexBraces
-	case r == ' ', r == '=':
+	case r == ' ', r == '\t', r == '=':
 		return lexValue
 	case r == '-':
 		// grep -A etc can add '--' lines to output
 		// we'll save the text but not actually do
 		// anything with them
 		return lexIgnore
-	case r == utf8.RuneError:
+	case l.width == 0:
 		return nil
 	default:
 		l.emit(typError)
@@ -287,7 +288,7 @@ func lexQuotedKey(l *lexer) lexFn {
 
 // lexValue lexes a value at the end of a statement
 func lexValue(l *lexer) lexFn {
-	l.acceptRun(" ")
+	l.acceptRun(" \t")
 	l.ignore()
 
 	if l.accept("=") {
@@ -295,7 +296,7 @@ func lexValue(l *lexer) lexFn {
 	} else {
 		return nil
 	}
-	l.acceptRun(" ")
+	l.acceptRun(" \t")
 	l.ignore()
 
 	switch {
@@ -331,7 +332,7 @@ func lexValue(l *lexer) lexFn {
 		l.emit(typNumber)
 	}
 
-	l.acceptRun(" ")
+	l.acceptRun(" \t")
 	l.ignore()
 
 	if l.accept(";") {
@@ -347,7 +348,7 @@ func lexValue(l *lexer) lexFn {
 // and emits them as a typIgnored token
 func lexIgnore(l *lexer) lexFn {
 	l.acceptRunFunc(func(r rune) bool {
-		return r != utf8.RuneError
+		return l.width > 0
 	})
 	l.emit(typIgnored)
 	return nil
@@ -439,21 +440,27 @@ func ungronTokens(ts []token) (interface{}, error) {
 	}
 }
 
-// recursiveMerge merges maps and slices, or returns b for scalars
+// recursiveMerge merges like containers; a later incompatible value replaces an earlier one.
 func recursiveMerge(a, b interface{}) (interface{}, error) {
 	switch a.(type) {
 
 	case map[string]interface{}:
 		bMap, ok := b.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("cannot merge object with non-object")
+			if _, array := b.([]interface{}); array {
+				return nil, fmt.Errorf("cannot merge object with array")
+			}
+			return b, nil
 		}
 		return recursiveMapMerge(a.(map[string]interface{}), bMap)
 
 	case []interface{}:
 		bSlice, ok := b.([]interface{})
 		if !ok {
-			return nil, fmt.Errorf("cannot merge array with non-array")
+			if _, object := b.(map[string]interface{}); object {
+				return nil, fmt.Errorf("cannot merge array with object")
+			}
+			return b, nil
 		}
 		return recursiveSliceMerge(a.([]interface{}), bSlice)
 
@@ -489,16 +496,15 @@ func recursiveMapMerge(a, b map[string]interface{}) (map[string]interface{}, err
 
 // recursiveSliceMerge recursively merged []interface{} values
 func recursiveSliceMerge(a, b []interface{}) ([]interface{}, error) {
-	// We need a new slice with the capacity of whichever
-	// slive is biggest
-	outLen := len(a)
-	if len(b) > outLen {
-		outLen = len(b)
+	out := a
+	if len(b) > len(out) {
+		if cap(out) >= len(b) {
+			out = out[:len(b)]
+		} else {
+			out = make([]interface{}, len(b), 2*len(b))
+			copy(out, a)
+		}
 	}
-	out := make([]interface{}, outLen)
-
-	// Copy the values from 'a' into the output slice
-	copy(out, a)
 
 	// Add the values from 'b'; merging existing keys
 	for k, v := range b {

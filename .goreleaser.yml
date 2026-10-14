@@ -1,11 +1,34 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
-    - go mod vendor
+builds:
+  - id: gron
+    main: .
+    binary: gron
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.gronVersion={{.Version}}
+    goos:
+      - darwin
+      - linux
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - '7'
+    ignore:
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm
+
+release:
+  github:
+    owner: vyrus001
+    name: gron
 
 source:
   enabled: true
-  files:
-    - vendor

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -66,7 +65,7 @@ func configureProxy(url string, proxy string, noProxy string) func(*http.Request
 	return http.ProxyURL(proxyURL)
 }
 
-func getURL(url string, insecure bool, proxyURL string, noProxy string) (io.Reader, error) {
+func getURL(url string, insecure bool, proxyURL string, noProxy string) (io.ReadCloser, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure},
 	}
@@ -84,7 +83,7 @@ func getURL(url string, insecure bool, proxyURL string, noProxy string) (io.Read
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", fmt.Sprintf("gron/%s", gronVersion))
+	req.Header.Set("User-Agent", fmt.Sprintf("gron/%s", version()))
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
@@ -93,5 +92,9 @@ func getURL(url string, insecure bool, proxyURL string, noProxy string) (io.Read
 		return nil, err
 	}
 
-	return bufio.NewReader(resp.Body), err
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %s", resp.Status)
+	}
+	return resp.Body, nil
 }

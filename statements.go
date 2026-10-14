@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -164,10 +167,12 @@ type statementmaker func(str string) (statement, error)
 // statementFromString takes statement string, lexes it and returns
 // the corresponding statement
 func statementFromString(str string) statement {
-	l := newLexer(str)
+	l := newLexer(ansiSGR.ReplaceAllString(str, ""))
 	s := l.lex()
 	return s
 }
+
+var ansiSGR = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // statementmaker variant of statementFromString
 func statementFromStringMaker(str string) (statement, error) {
@@ -271,40 +276,43 @@ out:
 	return s, nil
 }
 
-// ungron turns statements into a proper datastructure
-func (ss statements) toInterface() (interface{}, error) {
+type statementMerger struct {
+	value interface{}
+	count int
+}
 
-	// Get all the individually parsed statements
-	var parsed []interface{}
-	for _, s := range ss {
-		u, err := ungronTokens(s)
-
-		switch err.(type) {
-		case nil:
-			// no problem :)
-		case errRecoverable:
-			continue
-		default:
-			return nil, errors.Wrapf(err, "ungron failed for `%s`", s)
-		}
-
-		parsed = append(parsed, u)
+func (m *statementMerger) add(s statement) error {
+	parsed, err := ungronTokens(s)
+	if _, ok := err.(errRecoverable); ok {
+		return nil
 	}
+	if err != nil {
+		return errors.Wrapf(err, "ungron failed for `%s`", s)
+	}
+	if m.count == 0 {
+		m.value = parsed
+	} else {
+		m.value, err = recursiveMerge(m.value, parsed)
+		if err != nil {
+			return errors.Wrap(err, "failed to merge statements")
+		}
+	}
+	m.count++
+	return nil
+}
 
-	if len(parsed) == 0 {
+// ungron turns statements into a proper datastructure.
+func (ss statements) toInterface() (interface{}, error) {
+	var merger statementMerger
+	for line, s := range ss {
+		if err := merger.add(s); err != nil {
+			return nil, errors.Wrapf(err, "line %d", line+1)
+		}
+	}
+	if merger.count == 0 {
 		return nil, fmt.Errorf("no statements were parsed")
 	}
-
-	merged := parsed[0]
-	for _, p := range parsed[1:] {
-		m, err := recursiveMerge(merged, p)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to merge statements")
-		}
-		merged = m
-	}
-	return merged, nil
-
+	return merger.value, nil
 }
 
 // Less compares two statements for sort.Sort
@@ -387,15 +395,30 @@ func (ss statements) Contains(search statement) bool {
 // and returns statements or an error on failure
 func statementsFromJSON(r io.Reader, prefix statement) (statements, error) {
 	var top interface{}
-	d := json.NewDecoder(r)
+	d := json.NewDecoder(withoutUTF8BOM(r))
 	d.UseNumber()
 	err := d.Decode(&top)
 	if err != nil {
 		return nil, err
 	}
+	var trailing interface{}
+	if err := d.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("multiple JSON values; use --stream")
+		}
+		return nil, err
+	}
 	ss := make(statements, 0, 32)
 	ss.fill(prefix, top)
 	return ss, nil
+}
+
+func withoutUTF8BOM(r io.Reader) io.Reader {
+	buffered := bufio.NewReader(r)
+	if first, _ := buffered.Peek(3); bytes.Equal(first, []byte{0xef, 0xbb, 0xbf}) {
+		_, _ = buffered.Discard(3)
+	}
+	return buffered
 }
 
 // fill takes a prefix statement and some value and recursively fills

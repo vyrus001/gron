@@ -1,4 +1,4 @@
-module github.com/tomnomnom/gron
+module github.com/vyrus001/gron
 
 go 1.24
 

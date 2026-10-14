@@ -1,7 +1,9 @@
 # gron
-[![Build Status](https://travis-ci.org/tomnomnom/gron.svg?branch=master)](https://travis-ci.org/tomnomnom/gron)
+[![Go tests](https://github.com/vyrus001/gron/actions/workflows/build.yml/badge.svg)](https://github.com/vyrus001/gron/actions/workflows/build.yml)
 
 Make JSON greppable!
+
+This maintained fork tracks upstream fixes and release decisions in [the maintenance review](docs/MAINTENANCE.md). Agent harness authors can use the [gron harness skill](.agents/skills/gron-harness/SKILL.md).
 
 gron transforms JSON into discrete assignments to make it easier to `grep` for what you want and see the absolute 'path' to it.
 It eases the exploration of APIs that return large blobs of JSON but have terrible documentation.
@@ -34,14 +36,20 @@ gron can work backwards too, enabling you to turn your filtered data back into J
 
 ## Installation
 
-gron has no runtime dependencies. You can just [download a binary for Linux, Mac, Windows or FreeBSD and run it](https://github.com/tomnomnom/gron/releases).
+gron has no runtime dependencies. You can just [download a binary for Linux, Mac, Windows or FreeBSD and run it](https://github.com/vyrus001/gron/releases).
 Put the binary in your `$PATH` (e.g. in `/usr/local/bin`) to make it easy to use:
 ```
 ▶ tar xzf gron-linux-amd64-0.1.5.tgz
 ▶ sudo mv gron /usr/local/bin/
 ```
 
-If you're a Mac user you can also [install gron via brew](http://braumeister.org/formula/gron):
+If you are a [mise](https://github.com/jdx/mise) user, you can install upstream gron on Linux/macOS/Windows using:
+
+```
+▶ mise use -g gron@latest
+```
+
+If you're a Mac user you can also install upstream gron via Homebrew:
 ```
 ▶ brew install gron
 ```
@@ -49,7 +57,7 @@ If you're a Mac user you can also [install gron via brew](http://braumeister.org
 Or if you're a Go user you can use `go install`:
 
 ```
-▶ go install github.com/tomnomnom/gron@latest
+▶ go install github.com/vyrus001/gron@latest
 ```
 
 It's recommended that you alias `ungron` or `norg` (or both!) to `gron --ungron`. Put something like this in your shell profile (e.g. in `~/.bashrc`):
@@ -80,25 +88,18 @@ json.likes[2] = "meat";
 json.name = "Tom";
 ```
 
-From a URL:
+From a URL (the GitHub API remains available):
 
 ```
-▶ gron http://headers.jsontest.com/
-json = {};
-json.Host = "headers.jsontest.com";
-json["User-Agent"] = "gron/0.1";
-json["X-Cloud-Trace-Context"] = "6917a823919477919dbc1523584ba25d/11970839830843610056";
+▶ gron https://api.github.com/repos/vyrus001/gron | grep 'json.full_name'
+json.full_name = "vyrus001/gron";
 ```
 
 Or from `stdin`:
 
 ```
-▶ curl -s http://headers.jsontest.com/ | gron
-json = {};
-json.Accept = "*/*";
-json.Host = "headers.jsontest.com";
-json["User-Agent"] = "curl/7.43.0";
-json["X-Cloud-Trace-Context"] = "c70f7bf26661c67d0b9f2cde6f295319/13941186890243645147";
+▶ curl -fsSL https://api.github.com/repos/vyrus001/gron | gron | grep 'json.fork'
+json.fork = true;
 ```
 
 Grep for something and easily see the path to it:
@@ -130,17 +131,29 @@ The output of `gron` is valid JavaScript:
   name: 'Tom' }
 ```
 
-It's also possible to obtain the `gron` output as JSON stream via
-the `--json` switch:
+It's also possible to obtain path/value records as a JSON stream with `--json`:
 
 ```
-▶ curl -s http://headers.jsontest.com/ | gron --json
-[[],{}]
-[["Accept"],"*/*"]
-[["Host"],"headers.jsontest.com"]
-[["User-Agent"],"curl/7.43.0"]
-[["X-Cloud-Trace-Context"],"c70f7bf26661c67d0b9f2cde6f295319/13941186890243645147"]
+▶ gron --json testdata/two.json | grep 'contact'
+[["contact"],{}]
+[["contact","email"],"mail@tomnomnom.com"]
+[["contact","twitter"],"@TomNomNom"]
 ```
+
+Use `--stream` to process consecutive JSON values, including JSONL and values without line breaks:
+
+```
+▶ printf '{"a":1}{"b":2}' | gron --stream
+json = [];
+json[0] = {};
+json[0].a = 1;
+json[1] = {};
+json[1].b = 2;
+```
+
+`--no-sort` emits fields in input order without storing the entire JSON tree. Use it for large JSON files. A single very large string still needs memory for that value. Omit it when you need sorted, reproducible paths.
+
+Pass `--stream` with `--ungron` to reconstruct a JSONL stream instead of one JSON array.
 
 ## ungronning
 gron can also turn its output back into JSON:

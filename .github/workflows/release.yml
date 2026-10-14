@@ -1,4 +1,6 @@
 name: release
+permissions:
+  contents: write
 on:
   push:
     tags:
@@ -15,6 +17,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: 'stable'
+      - name: Test
+        run: go test ./...
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -22,4 +26,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

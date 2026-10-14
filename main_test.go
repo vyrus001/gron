@@ -6,8 +6,102 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestStreamHandlesAdjacentValuesAndLongLine(t *testing.T) {
+	long := strings.Repeat("x", 1024*1024+1)
+	in := strings.NewReader(`{"value":"` + long + `"}{"value":2}`)
+	var out bytes.Buffer
+	code, err := gronStream(in, &out, optMonochrome)
+	if code != exitOK || err != nil {
+		t.Fatalf("gronStream: code=%d err=%v", code, err)
+	}
+	if !strings.Contains(out.String(), `json[0].value = "`+long+`";`) || !strings.Contains(out.String(), "json[1].value = 2;") {
+		t.Fatal("stream output missing either value")
+	}
+}
+
+func TestGronRequiresStreamForMultipleValues(t *testing.T) {
+	for _, opts := range []int{optMonochrome, optMonochrome | optNoSort} {
+		var out bytes.Buffer
+		code, err := gron(strings.NewReader(`{"a":1}{"b":2}`), &out, opts)
+		if code == exitOK || err == nil || !strings.Contains(err.Error(), "use --stream") {
+			t.Fatalf("opts=%d code=%d err=%v", opts, code, err)
+		}
+	}
+}
+
+func TestNoSortKeepsInputObjectOrder(t *testing.T) {
+	for _, action := range []actionFn{gron, gronStream} {
+		var out bytes.Buffer
+		code, err := action(strings.NewReader(`{"z":1,"a":2}`), &out, optMonochrome|optNoSort)
+		if code != exitOK || err != nil {
+			t.Fatalf("no-sort: code=%d err=%v", code, err)
+		}
+		text := out.String()
+		if strings.Index(text, ".z = 1;") < 0 || strings.Index(text, ".z = 1;") > strings.Index(text, ".a = 2;") {
+			t.Fatalf("input order lost: %q", text)
+		}
+	}
+}
+
+func TestUngronStreamRestoresJSONL(t *testing.T) {
+	var gronned, restored bytes.Buffer
+	code, err := gronStream(strings.NewReader("{\"a\":1}\n{\"b\":2}\n"), &gronned, optMonochrome)
+	if code != exitOK || err != nil {
+		t.Fatalf("gronStream: code=%d err=%v", code, err)
+	}
+	code, err = ungron(&gronned, &restored, optMonochrome|optStream)
+	if code != exitOK || err != nil || restored.String() != "{\"a\":1}\n{\"b\":2}\n" {
+		t.Fatalf("ungron stream: code=%d err=%v output=%q", code, err, restored.String())
+	}
+}
+
+func TestUngronHandlesLongLineAndTypeReplacement(t *testing.T) {
+	long := strings.Repeat("x", 1024*1024+1)
+	for _, input := range []string{
+		`json.a = {};` + "\n" + `json.a = "` + long + `";`,
+		`json.a = "old";` + "\n" + `json.a = {};` + "\n" + `json.a.value = "` + long + `";`,
+	} {
+		var out bytes.Buffer
+		code, err := ungron(strings.NewReader(input), &out, optMonochrome)
+		if code != exitOK || err != nil {
+			t.Fatalf("ungron: code=%d err=%v", code, err)
+		}
+		if !strings.Contains(out.String(), long) {
+			t.Fatal("ungron output missing long value")
+		}
+	}
+}
+
+func TestGronValuesUsesProvidedStreams(t *testing.T) {
+	var out bytes.Buffer
+	code, err := gronValues(strings.NewReader(`json.value = "hello";`), &out, 0)
+	if code != exitOK || err != nil || out.String() != "hello\n" {
+		t.Fatalf("gronValues: code=%d err=%v output=%q", code, err, out.String())
+	}
+}
+
+func TestGronAcceptsUTF8BOM(t *testing.T) {
+	for _, action := range []actionFn{gron, gronStream} {
+		var out bytes.Buffer
+		code, err := action(strings.NewReader("\xef\xbb\xbf"+`{"value":1}`), &out, optMonochrome)
+		if code != exitOK || err != nil || !strings.Contains(out.String(), ".value = 1;") {
+			t.Fatalf("BOM input: code=%d err=%v output=%q", code, err, out.String())
+		}
+	}
+}
+
+func TestUngronAcceptsColoredStatements(t *testing.T) {
+	in := "\x1b[31mjson.value\x1b[0m = \x1b[1;33m\"hello\"\x1b[0m;\n"
+	var out bytes.Buffer
+	code, err := ungron(strings.NewReader(in), &out, optMonochrome)
+	if code != exitOK || err != nil || !strings.Contains(out.String(), `"value": "hello"`) {
+		t.Fatalf("colored input: code=%d err=%v output=%q", code, err, out.String())
+	}
+}
 
 func TestGron(t *testing.T) {
 	cases := []struct {

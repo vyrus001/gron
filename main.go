@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -33,6 +34,7 @@ const (
 	optMonochrome = 1 << iota
 	optNoSort
 	optJSON
+	optStream
 )
 
 // Output colors
@@ -63,14 +65,15 @@ func init() {
 		h += "Options:\n"
 		h += "  -u, --ungron     Reverse the operation (turn assignments back into JSON)\n"
 		h += "  -v, --values     Print just the values of provided assignments\n"
-		h += "  -c, --colorize   Colorize output (default on tty)\n"
-		h += "  -m, --monochrome Monochrome (don't colorize output)\n"
-		h += "  -s, --stream     Treat each line of input as a separate JSON object\n"
+		h += "  -c, --colorize, --color Colorize output (default on tty)\n"
+		h += "  -m, --monochrome, --no-color Monochrome output\n"
+		h += "  -s, --stream     Process consecutive JSON values as an array\n"
 		h += "  -k, --insecure   Disable certificate validation\n"
 		h += "  -x, --proxy      Set proxy configuration\n"
 		h += "      --noproxy    Comma-separated list of hosts for which not to use a proxy, if one is specified.\n"
 		h += "  -j, --json       Represent gron data as JSON stream\n"
-		h += "      --no-sort    Don't sort output (faster)\n"
+		h += "  -H, --with-filename Prefix text output lines with the input name\n"
+		h += "      --no-sort    Stream output in input order with lower memory use\n"
 		h += "      --version    Print version information\n\n"
 
 		h += "Exit Codes:\n"
@@ -104,6 +107,7 @@ func main() {
 		insecureFlag   bool
 		jsonFlag       bool
 		valuesFlag     bool
+		filenameFlag   bool
 		proxyURL       string
 		noProxy        string
 	)
@@ -112,8 +116,10 @@ func main() {
 	flag.BoolVar(&ungronFlag, "u", false, "")
 	flag.BoolVar(&colorizeFlag, "colorize", false, "")
 	flag.BoolVar(&colorizeFlag, "c", false, "")
+	flag.BoolVar(&colorizeFlag, "color", false, "")
 	flag.BoolVar(&monochromeFlag, "monochrome", false, "")
 	flag.BoolVar(&monochromeFlag, "m", false, "")
+	flag.BoolVar(&monochromeFlag, "no-color", false, "")
 	flag.BoolVar(&streamFlag, "s", false, "")
 	flag.BoolVar(&streamFlag, "stream", false, "")
 	flag.BoolVar(&noSortFlag, "no-sort", false, "")
@@ -125,6 +131,8 @@ func main() {
 	flag.BoolVar(&valuesFlag, "values", false, "")
 	flag.BoolVar(&valuesFlag, "value", false, "")
 	flag.BoolVar(&valuesFlag, "v", false, "")
+	flag.BoolVar(&filenameFlag, "H", false, "")
+	flag.BoolVar(&filenameFlag, "with-filename", false, "")
 	flag.StringVar(&proxyURL, "x", undefinedProxy, "")
 	flag.StringVar(&proxyURL, "proxy", undefinedProxy, "")
 	flag.StringVar(&noProxy, "noproxy", undefinedProxy, "")
@@ -133,7 +141,7 @@ func main() {
 
 	// Print version information
 	if versionFlag {
-		fmt.Printf("gron version %s\n", gronVersion)
+		fmt.Printf("gron version %s\n", version())
 		os.Exit(exitOK)
 	}
 
@@ -145,6 +153,7 @@ func main() {
 	// Determine what the program's input should be:
 	// file, HTTP URL or stdin
 	var rawInput io.Reader
+	var inputCloser io.Closer
 	filename := flag.Arg(0)
 	if filename == "" || filename == "-" {
 		rawInput = os.Stdin
@@ -154,12 +163,14 @@ func main() {
 			fatal(exitFetchURL, err)
 		}
 		rawInput = r
+		inputCloser = r
 	} else {
 		r, err := os.Open(filename)
 		if err != nil {
 			fatal(exitOpenFile, err)
 		}
 		rawInput = r
+		inputCloser = r
 	}
 
 	var opts int
@@ -177,6 +188,15 @@ func main() {
 	if jsonFlag {
 		opts = opts | optJSON
 	}
+	if streamFlag {
+		opts = opts | optStream
+		if ungronFlag {
+			opts = opts | optMonochrome
+		}
+	}
+	if filenameFlag && (jsonFlag || ungronFlag) {
+		fatal(exitParseStatements, fmt.Errorf("--with-filename requires text gron output"))
+	}
 
 	// Pick the appropriate action: gron, ungron, gronValues, or gronStream
 	var a actionFn = gron
@@ -187,13 +207,33 @@ func main() {
 	} else if streamFlag {
 		a = gronStream
 	}
-	exitCode, err := a(rawInput, colorable.NewColorableStdout(), opts)
+	var output io.Writer = colorable.NewColorableStdout()
+	if filenameFlag {
+		if filename == "" {
+			filename = "-"
+		}
+		output = newLinePrefixWriter(output, filename+": ")
+	}
+	exitCode, err := a(rawInput, output, opts)
+	if inputCloser != nil {
+		_ = inputCloser.Close()
+	}
 
 	if exitCode != exitOK {
 		fatal(exitCode, err)
 	}
 
 	os.Exit(exitOK)
+}
+
+func version() string {
+	if gronVersion != "dev" {
+		return gronVersion
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return strings.TrimPrefix(info.Main.Version, "v")
+	}
+	return gronVersion
 }
 
 // an actionFn represents a main action of the program, it accepts
@@ -204,7 +244,14 @@ type actionFn func(io.Reader, io.Writer, int) (int, error)
 // gron is the default action. Given JSON as the input it returns a list
 // of assignment statements. Possible options are optNoSort and optMonochrome
 func gron(r io.Reader, w io.Writer, opts int) (int, error) {
+	if opts&optNoSort > 0 {
+		return gronUnsorted(r, w, opts)
+	}
 	var err error
+
+	// Buffer the output; one write per statement is slow. Lines are
+	// never split between writes, so color sequences stay whole.
+	bw := bufio.NewWriter(w)
 
 	var conv statementconv
 	if opts&optMonochrome > 0 {
@@ -231,26 +278,29 @@ func gron(r io.Reader, w io.Writer, opts int) (int, error) {
 				goto out
 			}
 		}
-		fmt.Fprintln(w, conv(s))
+		line := conv(s)
+		if bw.Available() < len(line)+1 {
+			if flushErr := bw.Flush(); flushErr != nil {
+				return exitJSONEncode, fmt.Errorf("failed to write output: %w", flushErr)
+			}
+		}
+		if _, writeErr := fmt.Fprintln(bw, line); writeErr != nil {
+			return exitJSONEncode, fmt.Errorf("failed to write output: %w", writeErr)
+		}
 	}
 
 out:
 	if err != nil {
 		return exitFormStatements, fmt.Errorf("failed to form statements: %s", err)
 	}
+	if err := bw.Flush(); err != nil {
+		return exitJSONEncode, fmt.Errorf("failed to write output: %w", err)
+	}
 	return exitOK, nil
 }
 
-// gronStream is like the gron action, but it treats the input as one
-// JSON object per line. There's a bit of code duplication from the
-// gron action, but it'd be fairly messy to combine the two actions
+// gronStream is like the gron action, but processes consecutive JSON values.
 func gronStream(r io.Reader, w io.Writer, opts int) (int, error) {
-	var err error
-	errstr := "failed to form statements"
-	var i int
-	var sc *bufio.Scanner
-	var buf []byte
-
 	var conv func(s statement) string
 	if opts&optMonochrome > 0 {
 		conv = statementToString
@@ -278,29 +328,52 @@ func gronStream(r io.Reader, w io.Writer, opts int) (int, error) {
 	}
 
 	if opts&optJSON > 0 {
+		var err error
 		top, err = top.jsonify()
 		if err != nil {
-			goto out
+			return exitFormStatements, fmt.Errorf("failed to form statements: %w", err)
 		}
 	}
 
 	fmt.Fprintln(w, conv(top))
 
-	// Read the input line by line
-	sc = bufio.NewScanner(r)
-	buf = make([]byte, 0, 64*1024)
-	sc.Buffer(buf, 1024*1024)
-	i = 0
-	for sc.Scan() {
-
-		line := bytes.NewBuffer(sc.Bytes())
-
-		var ss statements
-		ss, err = statementsFromJSON(line, makePrefix(i))
-		i++
-		if err != nil {
-			goto out
+	decoder := json.NewDecoder(withoutUTF8BOM(r))
+	decoder.UseNumber()
+	for i := 0; ; i++ {
+		if opts&optNoSort > 0 {
+			first, err := decoder.Token()
+			if err == io.EOF {
+				return exitOK, nil
+			}
+			if err != nil {
+				return exitFormStatements, fmt.Errorf("failed to decode JSON value %d: %w", i+1, err)
+			}
+			err = walkJSON(decoder, first, makePrefix(i), func(s statement) error {
+				if opts&optJSON > 0 {
+					var err error
+					s, err = s.jsonify()
+					if err != nil {
+						return err
+					}
+				}
+				_, err := fmt.Fprintln(w, conv(s))
+				return err
+			})
+			if err != nil {
+				return exitFormStatements, fmt.Errorf("failed to decode JSON value %d: %w", i+1, err)
+			}
+			continue
 		}
+		var value interface{}
+		err := decoder.Decode(&value)
+		if err == io.EOF {
+			return exitOK, nil
+		}
+		if err != nil {
+			return exitFormStatements, fmt.Errorf("failed to decode JSON value %d: %w", i+1, err)
+		}
+		ss := make(statements, 0, 32)
+		ss.fill(makePrefix(i), value)
 
 		// Go's maps do not have well-defined ordering, but we want a consistent
 		// output for a given input, so we must sort the statements
@@ -312,33 +385,19 @@ func gronStream(r io.Reader, w io.Writer, opts int) (int, error) {
 			if opts&optJSON > 0 {
 				s, err = s.jsonify()
 				if err != nil {
-					goto out
+					return exitFormStatements, fmt.Errorf("failed to form statements: %w", err)
 				}
-
 			}
 			fmt.Fprintln(w, conv(s))
 		}
 	}
-	if err = sc.Err(); err != nil {
-		errstr = "error reading multiline input: %s"
-	}
-
-out:
-	if err != nil {
-		return exitFormStatements, fmt.Errorf(errstr+": %s", err)
-	}
-	return exitOK, nil
-
 }
 
 // ungron is the reverse of gron. Given assignment statements as input,
 // it returns JSON. The only option is optMonochrome
 func ungron(r io.Reader, w io.Writer, opts int) (int, error) {
-	scanner := bufio.NewScanner(r)
+	reader := bufio.NewReader(r)
 	var maker statementmaker
-
-	// Allow larger internal buffer of the scanner (min: 64KiB ~ max: 1MiB)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	if opts&optJSON > 0 {
 		maker = statementFromJSONSpec
@@ -346,24 +405,33 @@ func ungron(r io.Reader, w io.Writer, opts int) (int, error) {
 		maker = statementFromStringMaker
 	}
 
-	// Make a list of statements from the input
-	var ss statements
-	for scanner.Scan() {
-		s, err := maker(scanner.Text())
-		if err != nil {
-			return exitParseStatements, err
+	// Parse and merge each statement before reading the next one.
+	var merger statementMerger
+	for lineNo := 1; ; lineNo++ {
+		line, readErr := reader.ReadString('\n')
+		if readErr == io.EOF && line == "" {
+			break
 		}
-		ss.add(s)
-	}
-	if err := scanner.Err(); err != nil {
-		return exitReadInput, fmt.Errorf("failed to read input statements")
+		if readErr != nil && readErr != io.EOF {
+			return exitReadInput, fmt.Errorf("failed to read input statements at line %d: %w", lineNo, readErr)
+		}
+		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		s, err := maker(line)
+		if err != nil {
+			return exitParseStatements, fmt.Errorf("line %d: %w", lineNo, err)
+		}
+		if err := merger.add(s); err != nil {
+			return exitParseStatements, fmt.Errorf("line %d: %w", lineNo, err)
+		}
+		if readErr == io.EOF {
+			break
+		}
 	}
 
-	// turn the statements into a single merged interface{} type
-	merged, err := ss.toInterface()
-	if err != nil {
-		return exitParseStatements, err
+	if merger.count == 0 {
+		return exitParseStatements, fmt.Errorf("no statements were parsed")
 	}
+	merged := merger.value
 
 	// If there's only one top level key and it's "json", make that the top level thing
 	mergedMap, ok := merged.(map[string]interface{})
@@ -374,13 +442,37 @@ func ungron(r io.Reader, w io.Writer, opts int) (int, error) {
 			}
 		}
 	}
+	if opts&optStream > 0 {
+		values, ok := merged.([]interface{})
+		if !ok {
+			return exitParseStatements, fmt.Errorf("streamed ungron input must be an array")
+		}
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		for _, value := range values {
+			if err := enc.Encode(value); err != nil {
+				return exitJSONEncode, errors.Wrap(err, "failed to convert statements to JSON")
+			}
+		}
+		return exitOK, nil
+	}
 
-	// Marshal the output into JSON to display to the user
+	if opts&optMonochrome > 0 {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(merged); err != nil {
+			return exitJSONEncode, errors.Wrap(err, "failed to convert statements to JSON")
+		}
+		return exitOK, nil
+	}
+
+	// Colorized output needs the full JSON document.
 	out := &bytes.Buffer{}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
-	err = enc.Encode(merged)
+	err := enc.Encode(merged)
 	if err != nil {
 		return exitJSONEncode, errors.Wrap(err, "failed to convert statements to JSON")
 	}
@@ -414,7 +506,7 @@ func ungron(r io.Reader, w io.Writer, opts int) (int, error) {
 // without any quotes or anything of that sort; a bit like jq -r
 // e.g. json[0].user.name = "Sam"; -> Sam
 func gronValues(r io.Reader, w io.Writer, opts int) (int, error) {
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(r)
 
 	for scanner.Scan() {
 		s := statementFromString(scanner.Text())
@@ -429,7 +521,7 @@ func gronValues(r io.Reader, w io.Writer, opts int) (int, error) {
 		}
 
 		// strip off the leading dots
-		if s[0].typ == typDot || s[0].typ == typLBrace {
+		if len(s) > 0 && (s[0].typ == typDot || s[0].typ == typLBrace) {
 			s = s[1:]
 		}
 
@@ -442,15 +534,18 @@ func gronValues(r io.Reader, w io.Writer, opts int) (int, error) {
 					// just swallow errors and try to continue
 					continue
 				}
-				fmt.Println(text)
+				fmt.Fprintln(w, text)
 
 			case typNumber, typTrue, typFalse, typNull:
-				fmt.Println(t.text)
+				fmt.Fprintln(w, t.text)
 
 			default:
 				// Nothing
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return exitReadInput, err
 	}
 
 	return exitOK, nil
